@@ -32,7 +32,7 @@ Copy `Mclick.exe` to any Windows 10/11 machine, double-click, done.
 | Item | Value |
 |---|---|
 | Binary | `Mclick.exe` (single file, ~785 KB) |
-| Version | v1.1.9 |
+| Version | v1.2.0 |
 | Default tick | **5 s** (restarts from the moment the card was clicked) |
 | Window title | 魔精灵点击器 |
 | Templates | 48 unique (`assets/templates.bin`, 258 KB) |
@@ -88,6 +88,9 @@ Run `Mclick.exe --help` for the complete list of options.
 | `--sample-only` | Sample only: on a gray-band hit, save the frame and refresh | off |
 | `--skip-tpl <a,b,..>` | Exclude template indices (0-based); `none` = exclude nothing | `3,9,11,12` |
 | `--no-bg-guard` | Disable the common-background guard | off |
+| `--no-recheck` | Disable the pre-click re-check | on |
+| `--no-borderline-grace` | Disable the borderline grace rounds | on |
+| `--no-refresh-verify` | Disable the post-refresh pixel verification | on |
 | `--bg-spread <f>` | Criterion 1 — max-min spread of the same template across slots | `0.25` |
 | `--bg-max <f>` | Score ceiling above which the background guard does not apply | `0.93` |
 | `--bg-gap <f>` | Criterion 2 — minimum gap between best and runner-up score | `0.20` |
@@ -193,6 +196,25 @@ All 8 hits are real-card shapes ("one slot 0.854–0.950, the other two 0.376–
 Related options: `--no-bg-guard` (disable entirely), `--bg-spread`, `--bg-gap`, `--bg-max`, `--skip-tpl` (default `3,9,11,12`, `none` = keep every template).
 
 **Residual risk**: if a real card scores in the 0.78–0.93 gray band while the other two slots also exceed 0.75, criterion 2 may reject it. Tighten with `--bg-gap 0.12`, or disable the guard and control everything with the threshold.
+
+#### Miss protection: re-check before the click, grace when borderline
+
+Both are on by default. They target the two ways a *real* card gets skipped, which shows up as "often misses" in play:
+
+| Guard | What it does | Why |
+|---|---|---|
+| **Pre-click re-check** (`--no-recheck` to disable) | Right before pressing, grab one more frame and re-locate the card. If it is gone or its score dropped below `--threshold`, skip the click and refresh instead. If it moved to another slot, click the new position. | The program locates the card, then holds until the beat. During that hold the game may already have played it, or its entry animation may have moved it. Clicking the old coordinates makes the log say "clicked" while the screen does not change. |
+| **Borderline grace** (`--no-borderline-grace` to disable) | When the best score sits just under the threshold (`threshold - 0.08`) and the search timeout is up, wait up to 2 more rounds of 120 ms instead of refreshing immediately. | A card in its fading-in animation scores 0.70–0.77 for a moment. Refreshing at that instant throws away a real card — and costs coins. |
+
+#### Refresh verification: did the refresh actually work?
+
+`--no-refresh-verify` disables it. After every refresh the program compares the three card slots with the frame taken before the click. If the pixel difference is below `0.5 %`, the cards did not change, which means either the refresh button coordinates are off for this window size or the background click was ignored. The log then says:
+
+```
+[refresh] 刷新后牌面几乎没变（差异 0.12% < 0.50%）→ 这次刷新可能没生效
+```
+
+This is the "burns coins without ever changing the cards" symptom. Re-calibrate with `--scan-refresh`, or fall back to `--fg-click` if background messages are being ignored.
 
 #### Capture paths
 
@@ -322,7 +344,7 @@ Mclick 是一个自包含的 Windows 自动点击器，用于某塔防小游戏�
 | 项目 | 值 |
 |---|---|
 | 产物 | `Mclick.exe`（单文件，约 785 KB） |
-| 版本 | v1.1.9 |
+| 版本 | v1.3.1 |
 | 默认节拍 | **5 秒**（从「点中卡牌那一刻」重新起算） |
 | 窗口标题 | 魔精灵点击器 |
 | 模板数 | 48 张（`assets/templates.bin`，258 KB） |
@@ -378,6 +400,9 @@ Mclick.exe --window "塔防" --dump --threshold 0.7 --times 1
 | `--sample-only` | 只采样不点牌：灰区命中就存图再刷新 | 关 |
 | `--skip-tpl <a,b,..>` | 剔除指定模板编号（0-based）；`none` = 不剔除 | `3,9,11,12` |
 | `--no-bg-guard` | 关闭共同底纹防线 | 关 |
+| `--no-recheck` | 关闭「到点点击前复检」 | 开 |
+| `--no-borderline-grace` | 关闭「贴阈值宽限」 | 开 |
+| `--no-refresh-verify` | 关闭「刷新后牌面像素核对」 | 开 |
 | `--bg-spread <f>` | 判据一：同一模板三格分数的极差阈值 | `0.25` |
 | `--bg-max <f>` | 分数上限，超过它不再判底纹 | `0.93` |
 | `--bg-gap <f>` | 判据二：最高分与次高分的最小落差 | `0.20` |
@@ -483,6 +508,25 @@ Mclick.exe --window "塔防" --dump --threshold 0.7 --times 1
 相关参数：`--no-bg-guard`（全关）、`--bg-spread`、`--bg-gap`、`--bg-max`、`--skip-tpl`（默认 `3,9,11,12`，`none` = 不剔除任何模板）。
 
 **残余风险**：真牌分数落在 0.78~0.93 灰区、且另两格也拿到 0.75 以上时，可能被判据二误杀。可用 `--bg-gap 0.12` 收紧，或 `--no-bg-guard` 后单用阈值控制。
+
+#### 防漏打：点击前复检 + 贴阈值宽限
+
+两项默认开启，针对「真牌被跳过」的两种典型情形，也就是实际使用中最常见的「经常漏打」：
+
+| 防线 | 做什么 | 为什么 |
+|---|---|---|
+| **点击前复检**（`--no-recheck` 关闭） | 到点真正按下之前，重新抓一帧再找一次。牌已经不在、或分数掉到 `--threshold` 以下 → 这一次不点，直接换牌；牌换到了别的格 → 按新坐标点。 | 程序是「先找到牌，再等节拍到点」才点。等待期间游戏可能已经自动出牌、入场动画也可能让牌位移，拿等待前的坐标去点，结果就是日志说点了、画面没变化。 |
+| **贴阈值宽限**（`--no-borderline-grace` 关闭） | 最高分贴着阈值（`threshold - 0.08`）且查找超时时，先多等最多 2 轮 × 120 ms，不立刻刷新。 | 牌在淡入动画里会短暂只有 0.70~0.77。这一瞬间刷新，既丢掉真牌，又白花一次金币。 |
+
+#### 防乱刷钱：刷新效果核对
+
+`--no-refresh-verify` 关闭。每次刷新后，拿刷新前的帧和刷新后三格区域做像素比对；差异低于 `0.5%` 说明牌面根本没换，可能是刷新按钮坐标在当前窗口尺寸下偏了，或后台点击被游戏忽略，日志会明确告警：
+
+```
+[refresh] 刷新后牌面几乎没变（差异 0.12% < 0.50%）→ 这次刷新可能没生效
+```
+
+这正是「金币一直掉、牌一直不换」的形态。用 `--scan-refresh` 重新标定刷新按钮，或改 `--fg-click` 用前台点击试探后台消息是否被忽略。
 
 #### 抓图通路
 

@@ -34,3 +34,6 @@ gray_check/
 .idea/
 Thumbs.db
 desktop.ini
+
+# Delivery folder (built exe + source snapshots, kept local only)
+/releases/

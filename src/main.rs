@@ -160,6 +160,27 @@ pub struct Config {
     /// 详细输出（-g / --verbose）：带它启动 = 打印全部信息（坐标、相似度、耗时等）；
     /// 不带 = 只打印最简状态（点中了几次、还剩多久、钱够不够），不带坐标等细节。
     pub verbose: bool,
+    /// 点击前复检（默认开，--no-recheck 关）：命中后要等到节拍到点才点，这期间牌可能已被
+    /// 游戏换掉/播动画移位。到点那一刻重新抓一帧确认牌还在、分数还够，再按新坐标点，
+    /// 避免「识别到了却点空」。
+    pub recheck: bool,
+    /// 贴阈值宽限（默认开，--no-borderline-grace 关）：最高分贴在阈值边上（动画中没画完的真牌）
+    /// 时先多等 BORDERLINE_GRACE_ROUNDS 轮再刷新，别急着把它刷掉。
+    pub borderline_grace: bool,
+    /// 刷新效果核对（默认开，--no-refresh-verify 关）：刷新后比对三格区域像素，
+    /// 差异过小说明这次刷新没生效（按钮坐标偏了 / 后台点击被忽略），日志告警，避免白花钱一直空刷。
+    pub refresh_verify: bool,
+    /// 低分兜底点击（默认开，--no-loose-hit 关）：最高分只比命中线低一点点（LOOSE_DROP 以内）、
+    /// 且「一格独高」时，照样点出去，不再去刷新换牌 —— 解决「明明有一张卡却视而不见去刷新」。
+    pub loose_hit: bool,
+    /// 「三格必有一格」模式（默认开，--no-assume-one 关）：游戏规则是刷新后三格手牌里必有
+    /// 一张魔精灵，所以分数没到命中线不代表「没有」，而代表「这张牌画得不像模板」。
+    /// 开启后取三格最高分那格直接点，不再因为没过阈值去刷新换牌。
+    pub assume_one: bool,
+    /// 「三格必有一格」模式的最低可信分（默认 0.55，--assume-floor 调）。
+    /// 低于它的帧（空槽 / 坐标偏了 / 完全对不上的画面，实测 0.25~0.38）不点，
+    /// 免得把三格空白当成牌乱点乱刷。
+    pub assume_floor: f64,
 }
 
 impl Config {
@@ -230,6 +251,12 @@ impl Default for Config {
             size_lock_client: None,
             size_test: false,
             verbose: false,
+            recheck: true,
+            borderline_grace: true,
+            refresh_verify: true,
+            loose_hit: true,
+            assume_one: true,
+            assume_floor: 0.20,
         }
     }
 }
@@ -288,6 +315,96 @@ pub const MONEY_OK_ROUNDS: u32 = 2;
 /// 取 1500 ms ≈ 每分钟 40 次刷新 × 15 金币 = 600 金币/分钟的上限，给攒钱留出余量；
 /// 想更快用 --refresh-gap-ms 1200，想更省用 --refresh-gap-ms 2500。
 pub const REFRESH_GAP_MS: u64 = 1500;
+
+/// 「三格齐平」判据二的保护余量：判据二只在「三格都像牌、只是分不开」时才成立。
+///
+/// 旧实现只看 `最高分 - 次高分 < bg_gap(0.20)`：真牌帧次高分落在 0.38~0.61，一旦
+/// 命中格分数被动画/缩放压到 0.79 左右，落差就掉到 0.19 以下，真牌被当成底纹判掉
+/// ——表现为「明明有魔精灵却一直不点、继续刷钱」。现在要求次高分也 ≥ 命中线 - 该余量，
+/// 真牌另两格（≤0.61）远达不到，底纹帧（三格 0.76~0.93）全部满足，区分度很足。
+pub const BG_SECOND_MARGIN: f64 = 0.10;
+
+/// 贴阈值帧的宽限轮数：最高分落在 [阈值-0.08, 阈值) 时，先多等几轮再判「没有」。
+/// 真牌入场动画还没画完时分数会被压低，急着刷新等于自己把牌刷掉。
+/// 实测牌面 66 ms 开始换、300~367 ms 才画完，2 轮 ×120 ms = 240 ms 盖不住画完那一刻，
+/// 故放宽到 4 轮 ×150 ms = 600 ms（宽限期间只重扫不刷新，不花钱）。
+pub const BORDERLINE_GRACE_ROUNDS: u32 = 4;
+
+/// 贴阈值帧每轮的等待时间（毫秒）
+pub const BORDERLINE_GRACE_MS: u64 = 150;
+
+/// 「低分兜底点击」允许的最低分落差（默认 0.12）。
+///
+/// 真牌被入场动画 / 窗口缩放 / 半透明过渡压低分数时，最高分会掉到命中线以下一点点
+/// （0.66~0.78）。这种情况如果直接刷新，等于花钱把真牌刷掉 —— 用户看到的现象就是
+/// 「明明有一张卡却视而不见去刷新」。
+///
+/// 兜底点击的触发条件很严（三条同时成立），误点风险很低：
+///   ① 最高分 ≥ 命中线 - 该落差；
+///   ② 最高分 - 次高分 ≥ bg_gap(0.20)，即「一格独高」，底纹帧（三格挤在一起）进不来；
+///   ③ 其实也就是底纹守卫已经放行的帧。
+/// 代价分析：误点时点空槽/别的牌不消耗刷新金币；而漏打再刷新则必花一次金币。
+/// 想完全禁止用 `--no-loose-hit`。
+pub const LOOSE_DROP: f64 = 0.12;
+
+/// 「三格齐平」判据一的最低分前提：三格分数极差小，还要三格**都**像牌才算共同底纹。
+///
+/// 旧实现只看「三格同模板 + 极差 < bg_spread(0.25)」：真牌那格 0.82、另两格空槽被同一张
+/// 模板承接成 0.60/0.62 时，极差 0.22 < 0.25 → 真牌被当底纹判掉（漏打）。
+/// 底纹帧三格都在 0.76~0.93，最低分也高；真牌帧另两格只有 0.38~0.62。
+/// 所以补一条「最低分 ≥ 命中线 - BG_SECOND_MARGIN 才算齐平」。
+pub fn bg_flat_floor(lo: f64) -> f64 {
+    lo - BG_SECOND_MARGIN
+}
+
+/// 刷新后「牌面真的变了」的判据：三格区域像素差异低于该百分比 = 这次刷新很可能没生效
+/// （刷新按钮坐标偏了、或后台点击被游戏忽略）。此时只告警不阻断，避免白刷金币还以为在换牌。
+pub const REFRESH_EFFECT_MIN_PCT: f64 = 0.5;
+
+/// 连续这么多次「刷新了但牌面没变」就停止自动点击（默认 3 次）。
+///
+/// 这是乱刷钱的最后一道止血阀：如果刷新按钮坐标在当前窗口尺寸/界面下是错的，
+/// 程序会一次次点下去、金币一次次扣掉、牌面一动不动，用户却只看到「钱少了」。
+/// 与其无限消耗，不如停手并给出明确的排查指引（--scan-refresh 重新标定 / --fg-click）。
+pub const REFRESH_BLOCK_ROUNDS: u32 = 3;
+
+/// 刷新后「判这手牌没有」之前的最短观察窗口（毫秒）。
+///
+/// 这是「空刷」的第一道防线：新牌从开始换到画完实测 300~367 ms，再加上点刷新 →
+/// 游戏收到 → 重绘的链路延迟，一帧就判空等于在牌面还没画出来的空档里把钱刷掉。
+pub const EMPTY_MIN_OBSERVE_MS: u64 = 1200;
+
+/// 「三格必有一格」模式下，判这手牌没有之前的最短观察窗口（毫秒）。
+///
+/// 【2026-11-09 新增】规则前提变了：三格手牌里必有一张魔精灵，牌槽为空只等于「没钱」，
+/// 而没钱由 ensure_money / confirm_money_red 的红色像素检测负责。
+/// 那么 match_cells 走到 Miss 就只剩两种解释：①牌还没画完（抓早了）②坐标偏了/窗口变了。
+/// 两种都不该靠「再花金币刷一次」来解决 —— 前者该等，后者该告警。
+/// 所以 assume_one 模式下把观察窗口从 1200 ms 抬到 1500 ms，给牌面留足绘制时间。
+pub const ASSUME_MISS_OBSERVE_MS: u64 = 1500;
+
+/// 「三格必有一格」模式下，到点复检允许的最低相似度（复检绝对底线）。
+///
+/// 【2026-11-09 v1.3.3 新增】手牌从「刚刷新」放到「满 5 秒」被点，牌面会因动画/特效被压分：
+/// 实测同一张牌刷新后 0.6 秒测得 0.819，放满 5 秒只有 0.626。
+/// 旧代码用「命中线 - 0.05」（≈0.730）当复检门槛，于是这张真牌每次都被否掉 → 刷牌 → 空烧金币。
+/// 三格必有一格的前提下，复检落空只可能是抓早了或画面在动，不该升级成花金币换牌，
+/// 所以这里给一个独立且更宽松的绝对底线，只用来识别「画面完全不对」（窗口遮挡/坐标全偏/纯黑）。
+pub const RECHECK_ASSUME_FLOOR: f64 = 0.45;
+
+/// 判「这手牌没有」需要的连续空帧票数（多帧投票，替代单帧判决）。
+pub const EMPTY_VOTES_NEED: u32 = 3;
+
+/// 这些空帧至少要跨越这么久（毫秒），避免三帧挤在 60 ms 里等于还是单帧判决。
+pub const EMPTY_VOTES_SPAN_MS: u64 = 300;
+
+/// 刷新未被确认生效（牌面几乎没变）时最多再等这么久（毫秒），超时打告警并放行。
+///
+/// 游戏卡顿时「刷新生效」会晚到：3 秒足够让一次正常刷新画完，超了就不是慢而是失效。
+pub const REFRESH_UNSURE_WAIT_MS: u64 = 3000;
+
+/// 等「牌面画完」时的轮询间隔（毫秒）：只抓帧不点击，20 ms 太费 CPU，100 ms 够用。
+pub const UNSETTLED_POLL_MS: u64 = 100;
 
 
 /// 三个方框的相对矩形（x, y, w, h）
@@ -532,6 +649,16 @@ fn parse_args() -> Config {
                 }
             }
             "--no-bg-guard" => cfg.bg_guard = false,
+            "--no-recheck" => cfg.recheck = false,
+            "--no-borderline-grace" => cfg.borderline_grace = false,
+            "--no-refresh-verify" => cfg.refresh_verify = false,
+            "--no-loose-hit" => cfg.loose_hit = false,
+            "--no-assume-one" => cfg.assume_one = false,
+            "--assume-one" => cfg.assume_one = true,
+            "--assume-floor" => {
+                i += 1;
+                cfg.assume_floor = args.get(i).and_then(|s| s.parse().ok()).unwrap_or(0.55);
+            }
             "--bg-spread" => {
                 i += 1;
                 cfg.bg_spread = args.get(i).and_then(|s| s.parse().ok()).unwrap_or(0.25);
@@ -621,6 +748,12 @@ fn parse_args() -> Config {
                      --sample-only       只采样不点牌：灰区命中就存图再刷新（配合上面两个用）\n  \
                      --skip-tpl <a,b,..> 剔除指定模板编号（0-based，默认 3,9,11,12），none = 不剔除\n  \
                      --no-bg-guard       关掉「三格齐平/最高次高分不开 → 判底纹」防线\n  \
+                     --no-recheck        关掉「到点点击前复检」（默认开：点之前重抓一帧确认牌还在，防点空）\n  \
+                     --no-borderline-grace 关掉「贴阈值宽限」（默认开：分数贴着阈值时多等两轮，防把动画中的真牌刷掉）\n  \
+                     --no-refresh-verify 关掉「刷新效果核对」（默认开：刷新后牌面没变会告警，防白刷金币）\n  \
+                    --no-loose-hit 关掉「低分兜底点击」（默认开：分数只差命中线一点点且一格独高时照样点，防有卡却去刷新）\n  \
+                     --no-assume-one 关掉「三格必有一格」（默认开：三格手牌必有一张魔精灵，取最高分那格直接点，不过阈值也不刷新）\n  \
+                     --assume-floor <f> 「三格必有一格」的最低可信分（默认 0.55，低于它视为空槽/坐标偏了，不点）\n  \
                      --bg-spread <f>     齐平极差阈值（默认 0.25，判据一）\n  \
                      --bg-max <f>        底纹判定的分数上限（默认 0.93，高分不再判底纹）\n  \
                      --bg-gap <f>        最高分与次高分的最小落差（默认 0.20，判据二）\n  \
@@ -1436,6 +1569,9 @@ enum Scan {
     Abort,
 }
 
+/// 连续「三格都没找到」的轮数，用于给 miss 日志降噪（非 verbose 下每 20 次打一行）
+static MISS_CNT: AtomicU64 = AtomicU64::new(0);
+
 /// 三格手牌模式：只在正下方三个卡牌框里找魔精灵。
 /// 返回（格号 1-based、客户区点击坐标、相似度）；本函数不点击、不刷新。
 fn match_cells(
@@ -1511,7 +1647,22 @@ fn match_cells(
     //      0.93/0.85/0.76（极差 0.17），故 bg_spread 默认取 0.25 把这些都盖住；
     //      真牌帧是「一高一低」——命中格 0.83~0.95，另外两格 0.38~0.61。
     // 真抽到两张同款皮肤时两张分数都会很高，故用 bg_max 兜住，不误杀。
-    if cfg.bg_guard && per_cell.len() >= 2 {
+    // 【2026-11-09 修正】assume_one 模式下整套底纹判据退役。
+    //
+    // 原因：这里的两个判据（same_flat / tight）一旦成立就 `return (None, sc[0])`，
+    // 把下面 loose_hit 与 assume_one「取三格最高分那格直接点」两条路整条短路掉。
+    // 而用户澄清的规则是「三格手牌里必有一张魔精灵」，牌槽为空只发生在
+    // 「没钱 → 价格变红 → 点不出来」这一种情况，那种情况由 ensure_money /
+    // confirm_money_red 的红色像素检测负责，与匹配分数、与三格是否齐平毫无关系。
+    //
+    // 于是底纹判据在这里的语义变成「用『三格分数挤在一起』来否定『必有一张』」，
+    // 直接违反规则前提：真牌 0.82 被动画压低、另两格空槽被 tpl#07/#29 承接到 0.70/0.72 时，
+    // gap=0.10 < bg_gap(0.20) 且 second=0.72 ≥ lo_score-0.10=0.68 → 判成底纹 → 去刷新，
+    // 这就是「明明有卡却刷掉」的最大来源。
+    //
+    // 因此：默认（assume_one 开）下完全不走这段；只有显式 --no-assume-one 时才保留，
+    // 供「三格不一定有牌」的其他玩法复用。
+    if cfg.bg_guard && !cfg.assume_one && per_cell.len() >= 2 {
         let all: Vec<(usize, f64)> = per_cell.iter().filter_map(|x| *x).collect();
         if all.len() == per_cell.len() {
             let detail = all
@@ -1521,11 +1672,15 @@ fn match_cells(
                 .join("/");
 
             // 判据一（同模板齐平）：三格最佳都是同一张模板且分数几乎一样 → 共同底纹。
+            // 但「极差小」必须建立在「三格都像牌」的前提上：真牌那格 0.82、另两格空槽被同一张
+            // 模板承接成 0.60/0.62 时极差只有 0.22 < bg_spread(0.25)，只看极差会把真牌判成底纹
+            // ——这正是「明明有一张卡却视而不见去刷新」的一大来源。故补最低分前提。
             let mx = all.iter().map(|x| x.1).fold(f64::MIN, f64::max);
             let mn = all.iter().map(|x| x.1).fold(f64::MAX, f64::min);
             let same_flat = all.iter().all(|x| x.0 == all[0].0)
                 && mx - mn < cfg.bg_spread
-                && mx < cfg.bg_max;
+                && mx < cfg.bg_max
+                && mn >= bg_flat_floor(cfg.lo_score());
 
             // 判据二（拉不开）：真牌永远是「一格很高、另外两格很低」，最高分与次高分之间
             // 有 0.29~0.53 的落差；底纹帧三格分数挤在一起，落差只有 0.005~0.10。
@@ -1534,7 +1689,11 @@ fn match_cells(
             let mut sc: Vec<f64> = all.iter().map(|x| x.1).collect();
             sc.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
             let gap = sc[0] - sc[1];
-            let tight = sc[0] <= cfg.bg_max && gap < cfg.bg_gap;
+            // 判据二的前提：三格「都像牌」才谈得上分不开。次高分低于 命中线-BG_SECOND_MARGIN
+            // 时，另两格其实是空槽/底纹（真牌帧次高分 0.38~0.61），不能用「分不开」把它们一起判掉，
+            // 否则真牌分数被动画压低一点点就会被误杀成底纹（漏打的直接来源）。
+            let second_is_card = sc[1] >= cfg.lo_score() - BG_SECOND_MARGIN;
+            let tight = sc[0] <= cfg.bg_max && gap < cfg.bg_gap && second_is_card;
 
             if same_flat || tight {
                 let why = if same_flat {
@@ -1556,17 +1715,76 @@ fn match_cells(
         logvln!("[miss] 三格内均无候选");
         return (None, 0.0);
     };
-    if !cfg.hit(m.score) {
-        logvln!(
-            "[miss] 三格都没找到魔精灵（最高 第{}格 {:.3} 不在区间 {}）",
-            idx + 1,
-            m.score,
-            cfg.range_txt()
-        );
-        return (None, top);
-    }
     let cx = rx as i32 + m.x as i32 + m.w as i32 / 2;
     let cy = ry as i32 + m.y as i32 + m.h as i32 / 2;
+    if !cfg.hit(m.score) {
+        // 次高分：判断「一格独高」还是「三格差不多」。
+        let mut sc: Vec<f64> = per_cell.iter().filter_map(|x| *x).map(|x| x.1).collect();
+        sc.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+        let second = if sc.len() >= 2 { sc[1] } else { 0.0 };
+        let gap = m.score - second;
+
+        // 低分兜底：分数只差命中线一点点，且「一格独高」→ 这就是一张被动画/缩放压低的真牌，
+        // 直接点出去，别去刷新换牌（刷新要花金币，还可能把真牌刷掉）。
+        if cfg.loose_hit
+            && m.score < cfg.lo_score()
+            && m.score >= cfg.lo_score() - LOOSE_DROP
+            && gap >= cfg.bg_gap
+        {
+            logln!(
+                "[loose] 第{}格 {:.3} 只差命中线 {:.2} {:.3}（另格最高 {:.3}，落差 {:.3}）→ 判定为真牌被压低，照样点击，不刷新换牌",
+                idx + 1,
+                m.score,
+                cfg.lo_score(),
+                cfg.lo_score() - m.score,
+                second,
+                gap
+            );
+            MISS_CNT.store(0, Ordering::SeqCst);
+            return (Some((idx + 1, cx, cy, m.score)), top);
+        }
+
+        // 「三格必有一格」：游戏规则是刷新后三格手牌里必有一张魔精灵。所以分数没过命中线
+        // 不能理解成「这轮没牌」，只能理解成「这张牌画得不像模板」（皮肤/动画/缩放/光照差异）。
+        // 既然必有一格，那就取三格最高分那格直接点，绝不因为分数不够去刷新换牌。
+        // 只留一条底线 assume_floor：三格全是空槽/坐标偏了/画面完全对不上时（实测 0.25~0.38）
+        // 不点，免得对着空白乱点乱刷金币。
+        if cfg.assume_one && m.score >= cfg.assume_floor {
+            logln!(
+                "[assume] 三格必有一格：取第{}格最高分 {:.3}（命中线 {:.2}，另格最高 {:.3}，落差 {:.3}）→ 直接点击，不刷新换牌",
+                idx + 1,
+                m.score,
+                cfg.lo_score(),
+                second,
+                gap
+            );
+            MISS_CNT.store(0, Ordering::SeqCst);
+            return (Some((idx + 1, cx, cy, m.score)), top);
+        }
+
+        // 真·没找到：非 verbose 下也每 20 次打一行，避免「只看到不断刷新、不知道为什么」。
+        let n = MISS_CNT.fetch_add(1, Ordering::SeqCst);
+        if cfg.verbose || n % 20 == 0 {
+            let hint = if cfg.assume_one {
+                "，但规则上三格必有一张 → 这不是「没牌」，而是三格区域整体对不上（窗口被遮挡 / 尺寸变了 / 坐标偏了），建议用 --dump 抓帧复核 --cells；若钱已变红则是没钱点了"
+            } else if m.score < cfg.lo_score() - 0.20 {
+                "，分数差得多：三格区域可能偏了（用 --dump 抓帧复核 --cells），或这张皮肤不在模板库里"
+            } else {
+                ""
+            };
+            logln!(
+                "[miss] 三格都没找到魔精灵（最高 第{}格 {:.3} 不在区间 {}，另格最高 {:.3}，落差 {:.3}{}）",
+                idx + 1,
+                m.score,
+                cfg.range_txt(),
+                second,
+                gap,
+                hint
+            );
+        }
+        return (None, top);
+    }
+    MISS_CNT.store(0, Ordering::SeqCst);
     (Some((idx + 1, cx, cy, m.score)), top)
 }
 
@@ -2288,6 +2506,198 @@ pub fn cycle_ms(cfg: &Config) -> u64 {
     }
 }
 
+/// 点击前复检：等到「该点」的那一刻，重新抓一帧确认这张牌还在、分数还够。
+///
+/// 为什么需要：命中之后要一直按住等到节拍到点（默认最长一个周期），这期间游戏可能出牌、
+/// 播入场动画、玩家自己点掉这张牌。拿等待之前那一帧的坐标去点，就是「日志说点中了、
+/// 实际点了个空」——这是漏打最隐蔽的一类来源。
+///
+/// 返回 Some((格位, cx, cy, score, frame))：可以点，且用复检到的新坐标与新格位；
+/// 返回 None：这张牌已经不该点了，调用方应改走「刷新换牌」。
+///
+/// 【v1.3.4】返回值补上格位：复检可能发现牌挪到了另一格，原来只回传坐标，
+/// 调用方日志仍打印初判格位（实测出现「第142次（第3格…点(453,563)）」而 453,563 是第1格），
+/// 坐标是对的，但人工核对日志时会误判成点错格。
+unsafe fn recheck_target(
+    cfg: &Config,
+    levels: &[matcher::TplScale],
+    idx: usize,
+    old_score: f64,
+) -> Option<(usize, i32, i32, f64, Frame)> {
+    let f = match unsafe { grab_frame(cfg) } {
+        Some(f) => f,
+        None => {
+            logw!("[recheck] 到点复检抓图失败 → 放弃本次点击，按未命中处理");
+            return None;
+        }
+    };
+    let found = if cfg.cells.is_empty() {
+        match_frame_full(cfg, levels, &f).map(|(x, y, s)| (0usize, x, y, s))
+    } else {
+        match_cells(cfg, levels, &f).0
+    };
+    let (nidx, nx, ny, ns) = match found {
+        Some(v) => v,
+        None => {
+            logln!(
+                "[recheck] 到点复检：牌已经不在了（原 第{idx}格 {old_score:.3}）→ 放弃这次点击，按未命中处理"
+            );
+            return None;
+        }
+    };
+    // 复检容差：旧实现硬卡「命中线 - 0.05」，会把「低分兜底命中」（[loose]，0.66~0.78）一律否掉，
+    // 于是刚认出来的真牌又被改判成刷新（还是那个「有卡却去刷新」）。现在改成：
+    // 允许落到命中线 - LOOSE_DROP，同时不允许比等待前掉超过 0.05。
+    //
+    // 【2026-11-09 修正】assume_floor 已从 0.55 降到 0.20（空槽只等于没钱，由红色像素检测管），
+    // 所以这里不能再直接跟 assume_floor 走，否则复检门槛会松到 0.20、
+    // 「等点期间牌被换掉」这种真该拦的情况就拦不住了。
+    // 改成一个独立的复检底线 0.45：既有足够余量容纳被动画压低的真牌，
+    // 又能识别出「这一格已经不是原来那张牌」。
+    //
+    // 【v1.3.3 修正】上面 0.45 的底线曾被下一行 `floor = hard_floor.max((lo-0.05).min(old-0.05))`
+    // 整个吃掉：assume_one 下 hard_floor=0.45，但那个 max 又把它顶回 0.730，
+    // 于是「手牌放满 5 秒被动画压分」的真牌（实测 0.626）每次复检都被否决 → 空刷金币。
+    // 现在 assume_one 下直接采用 hard_floor，不再参与「掉分不超过 0.05」的比较。
+    let hard_floor = if cfg.assume_one {
+        cfg.assume_floor.max(RECHECK_ASSUME_FLOOR).min(cfg.lo_score() - LOOSE_DROP)
+    } else {
+        cfg.lo_score() - LOOSE_DROP
+    };
+    let floor = if cfg.assume_one {
+        hard_floor
+    } else {
+        hard_floor.max((cfg.lo_score() - 0.05).min(old_score - 0.05))
+    };
+    if ns < floor {
+        logln!(
+            "[recheck] 到点复检：相似度从 {old_score:.3} 掉到 {ns:.3}（低于本轮容差 {floor:.3}）→ 放弃这次点击"
+        );
+        return None;
+    }
+    if nidx != idx {
+        logln!("[recheck] 到点复检：目标移到第{nidx}格（原第{idx}格）→ 按新位置 ({nx},{ny}) 点");
+    } else {
+        logvln!("[recheck] 到点复检通过：第{nidx}格 {ns:.3}（等待前 {old_score:.3}），点 ({nx},{ny})");
+    }
+    Some((nidx, nx, ny, ns, f))
+}
+
+/// 刷新之后：等牌面重绘，并核对「这次刷新到底生效了没有」。
+///
+/// 判据是刷新前后三格区域的像素差异：差异过小说明牌面根本没换（刷新按钮坐标偏了、
+/// 或后台 PostMessage 被游戏忽略）。这种情况程序会一直刷、钱一直掉、却什么也没换到，
+/// 正是「乱刷钱」的典型形态，所以这里留一条明确的告警日志。
+/// 返回牌面差异百分比；未启用核对、dry-run 或抓图失败返回 -1。
+fn settle_after_refresh(cfg: &Config, before: &Frame) -> f64 {
+    let ms = cfg.miss_interval_ms.max(REFRESH_SETTLE_MS);
+    sleep_interruptible(Duration::from_millis(ms));
+    if !cfg.refresh_verify || cfg.dry_run || !RUNNING.load(Ordering::SeqCst) {
+        return -1.0;
+    }
+    let Some(bb) = cells_bbox(cfg, before.w, before.h) else {
+        return -1.0;
+    };
+    let Some(nf) = (unsafe { grab_frame(cfg) }) else {
+        return -1.0;
+    };
+    if nf.w != before.w || nf.h != before.h || nf.bgra.len() != before.bgra.len() {
+        return -1.0;
+    }
+    let d = bbox_diff_pct(&before.bgra, &nf.bgra, before.w, bb);
+    if d < REFRESH_EFFECT_MIN_PCT {
+        logw!(
+            "[refresh] 刷新后牌面几乎没变（差异 {d:.2}% < {REFRESH_EFFECT_MIN_PCT:.2}%）→ 这次刷新可能没生效：核对刷新按钮坐标（--scan-refresh 重新标定），或改 --fg-click 用前台点击"
+        );
+    } else {
+        logvln!("[refresh] 刷新生效：三格区域牌面差异 {d:.2}%");
+    }
+    d
+}
+
+/// 按「刷新前基准帧」重算三格差异（用当前这一帧，不额外抓图）。
+///
+/// 用于复核「刷新当时看起来没变，但可能只是游戏卡顿、牌面晚画完」的情况：
+/// 定位阶段每帧都会顺手调一次，牌面一画完就能立刻放行判空。
+fn tri_diff_pct_vs_base(cfg: &Config, base: &(Vec<u8>, usize, usize), cur: &Frame) -> f64 {
+    if !cfg.refresh_verify || cfg.dry_run || !RUNNING.load(Ordering::SeqCst) {
+        return -1.0;
+    }
+    let (base_bgra, base_w, base_h) = base;
+    if cur.w != *base_w || cur.h != *base_h || cur.bgra.len() != base_bgra.len() {
+        return -1.0;
+    }
+    let Some(bb) = cells_bbox(cfg, *base_w, *base_h) else {
+        return -1.0;
+    };
+    bbox_diff_pct(base_bgra, &cur.bgra, *base_w, bb)
+}
+
+/// 刷新记账：回答一个问题——「这次刷新，牌面到底换了没有？」
+///
+/// 空刷的根因就是这个没人回答：刷新没生效时牌面还是旧牌，旧牌已经判过「没有」，
+/// 再判当然还是没有 → 一两秒后又刷一次，金币白掉、牌一张没换。
+/// 所以「判这手牌没有」之前，必须先确认这一次刷新是真的生效了。
+struct RefreshBook {
+    /// 本次刷新是否已确认让牌面变了
+    effective: bool,
+    /// 刷新前的基准帧（bgra, w, h）；没开核对时为 None
+    base: Option<(Vec<u8>, usize, usize)>,
+    /// 连续「刷了但牌面没变」的次数
+    bad: u32,
+}
+
+impl RefreshBook {
+    fn new() -> Self {
+        Self { effective: true, base: None, bad: 0 }
+    }
+
+    /// 点刷新之前调用：留基准帧，并把状态先置为「未确认生效」。
+    fn before_refresh(&mut self, cfg: &Config, f: &Frame) {
+        self.base = if cfg.refresh_verify && !cfg.dry_run {
+            Some((f.bgra.clone(), f.w, f.h))
+        } else {
+            None
+        };
+        // 没开核对 / dry-run 时无从判断，保持不阻塞（与旧行为一致，不制造死等）
+        self.effective = self.base.is_none();
+    }
+
+    /// 刷新之后调用，参数是 settle_after_refresh 的返回值（<0 表示判定不了）。
+    fn after_refresh(&mut self, d: f64) {
+        if d < 0.0 {
+            self.effective = true;
+            return;
+        }
+        if d >= REFRESH_EFFECT_MIN_PCT {
+            self.effective = true;
+            self.bad = 0;
+        } else {
+            self.effective = false;
+            self.bad += 1;
+        }
+    }
+
+    /// 定位阶段每帧复核：牌面后来画完了，就把「未确认生效」改判为生效。
+    fn recheck_late(&mut self, cfg: &Config, f: &Frame) -> f64 {
+        let Some(base) = self.base.as_ref() else {
+            return -1.0;
+        };
+        let d = tri_diff_pct_vs_base(cfg, base, f);
+        if d >= REFRESH_EFFECT_MIN_PCT {
+            self.effective = true;
+            self.bad = 0;
+        }
+        d
+    }
+
+    fn blocked(&self) -> bool {
+        self.bad >= REFRESH_BLOCK_ROUNDS
+    }
+}
+
+const BAD_REFRESH_MSG: &str = "刷新后牌面都没变 → 已停止自动点击，不再继续消耗金币。请核对刷新按钮坐标（--scan-refresh 重新标定），或改 --fg-click 确认后台点击是否被游戏忽略";
+
 /// 主循环：一「手」牌的节奏（按用户定的规则）
 ///
 ///   1. 点中魔精灵的那一刻开始计时（默认 5 秒）；
@@ -2315,8 +2725,12 @@ pub fn click_loop(cfg: &Config, engine: Option<&Engine>, levels: &[matcher::TplS
             period_ms as f64 / 1000.0, period_ms as f64 / 1000.0)
     );
     logvln!(
-        "[beat] 刷新后查找窗口 {} ms（到点没找到就立刻再刷）；另加「牌面静止仍然没有」立即再刷（静止要求 ≥{STABLE_MIN_MS} ms 且两帧差异 <{STABLE_DIFF_PCT}%）；刷新后最小保护 {settle_ms} ms",
-        cfg.find_wait_ms
+        "[beat] 刷新后查找窗口 {} ms（到点没找到就立刻再刷）；另加「牌面静止仍然没有」立即再刷（静止要求 ≥{STABLE_MIN_MS} ms 且两帧差异 <{STABLE_DIFF_PCT}%，且连续 {EMPTY_VOTES_NEED} 帧空票、跨度 ≥{EMPTY_VOTES_SPAN_MS} ms）；判空前至少观察 {} ms；刷新后最小保护 {settle_ms} ms；底纹防线：{}；三格必有一格：{}（底线分 {:.2}）",
+        cfg.find_wait_ms,
+        if cfg.assume_one { ASSUME_MISS_OBSERVE_MS } else { EMPTY_MIN_OBSERVE_MS },
+        if cfg.bg_guard && !cfg.assume_one { "开" } else { "关" },
+        if cfg.assume_one { "开" } else { "关" },
+        cfg.assume_floor
     );
     logvln!(
         "[beat] 刷新最小间隔 {} ms（--refresh-gap-ms）：两刷之间至少隔这么久，防止把金币刷光",
@@ -2330,6 +2744,10 @@ pub fn click_loop(cfg: &Config, engine: Option<&Engine>, levels: &[matcher::TplS
     let mut prev_click: u64 = 0; // 上一次点中的时刻
     let mut last_refresh: u64 = 0; // 上一次刷新的时刻（等待窗口从这里起算）
     let mut prev_miss_bgra: Option<Vec<u8>> = None; // 本手牌上一帧画面，用于「静止确认没有」
+    let mut grace_round: u32 = 0; // 贴阈值帧已经宽限了几轮（防把动画中的真牌刷掉）
+    let mut book = RefreshBook::new(); // 刷新记账：这次刷新到底生效了没有（判空的前提）
+    let mut empty_votes: u32 = 0; // 连续「确认没有」的空帧票数（多帧投票，替代单帧判决）
+    let mut empty_vote_at: u64 = 0; // 第一张空票的时刻（要求票数跨越足够长的时间）
 
     while RUNNING.load(Ordering::SeqCst) && (cfg.times == 0 || clicks < cfg.times) {
         scans += 1;
@@ -2365,6 +2783,10 @@ pub fn click_loop(cfg: &Config, engine: Option<&Engine>, levels: &[matcher::TplS
                     if cfg.times > 0 && clicks >= cfg.times {
                         break;
                     }
+                    // 采样模式不参与判空：重置记账与投票，避免后续定位阶段被卡在「未确认生效」
+                    book = RefreshBook::new();
+                    empty_votes = 0;
+                    empty_vote_at = 0;
                     unsafe { click_refresh(cfg, &f, "采样换牌") };
                     last_refresh = epoch_ms();
                     prev_miss_bgra = None;
@@ -2402,7 +2824,78 @@ pub fn click_loop(cfg: &Config, engine: Option<&Engine>, levels: &[matcher::TplS
                     );
                 }
 
-                // 2) 到点 → 点中魔精灵，下一个周期从这一下重新起算
+                // 2) 到点了 → 点之前再确认这张牌还在（等待期间可能已被游戏换掉/玩家点掉），
+                //    复检通过就按复检到的新坐标点；复检落空则这一下不算点中，直接换牌。
+                // 【v1.3.4】多接一个格位：复检可能把目标挪到别的格（如初判第3格、复检第1格），
+                // 后面的点中日志要按这个最终格位打印，否则坐标与文案会自相矛盾。
+                let (final_idx, cx, cy, score, f) = if cfg.recheck {
+                    match unsafe { recheck_target(cfg, levels, idx, score) } {
+                        Some(v) => v,
+                        // 【v1.3.3】三格必有一格：牌一定在手牌里，复检落空只说明「抓早了 / 画面在动」。
+                        // 旧行为是花金币刷掉这手牌（实测 25 次落空 → 25 次空刷，金币白烧），
+                        // 这里改为按初判坐标直接点：点不中不扣钱，点中就赚，且不会触发刷新换牌。
+                        None if cfg.assume_one => {
+                            grace_round = 0;
+                            logln!(
+                                "[recheck] (+{}ms) 复检落空 → 三格必有一格：不刷牌，直接按初判坐标 ({cx},{cy}) 点（相似度 {score:.3}）",
+                                elapsed_ms()
+                            );
+                            (idx, cx, cy, score, f)
+                        }
+                        None => {
+                            grace_round = 0;
+                            let now2 = epoch_ms();
+                            let since2 = now2.saturating_sub(last_refresh);
+                            if since2 < cfg.refresh_gap_ms {
+                                sleep_interruptible(Duration::from_millis(
+                                    cfg.refresh_gap_ms - since2,
+                                ));
+                                if !RUNNING.load(Ordering::SeqCst) {
+                                    break;
+                                }
+                            }
+                            if !ensure_money(cfg, &f, "复检落空换牌") {
+                                break;
+                            }
+                            refreshes += 1;
+                            logln!(
+                                "[recheck] (+{}ms) 复检落空 → 刷第 {} 次换牌（这一下不计入点中）",
+                                elapsed_ms(),
+                                refreshes
+                            );
+                            book.before_refresh(cfg, &f);
+                            empty_votes = 0;
+                            empty_vote_at = 0;
+                            unsafe { click_refresh(cfg, &f, "复检落空") };
+                            last_refresh = epoch_ms();
+                            prev_miss_bgra = None;
+                            INTERVAL_MS.store(settle_ms.max(1), Ordering::SeqCst);
+                            LAST_TICK_MS.store(epoch_ms(), Ordering::SeqCst);
+                            let d = settle_after_refresh(cfg, &f);
+                            book.after_refresh(d);
+                            if book.blocked() {
+                                logw!(
+                                    "[refresh] 连续 {} 次{}",
+                                    book.bad,
+                                    BAD_REFRESH_MSG
+                                );
+                                break;
+                            }
+                            continue;
+                        }
+                    }
+                } else {
+                    (idx, cx, cy, score, f)
+                };
+
+                // 【v1.3.4】点中日志的格位以最终格位为准（复检移位后不再沿用初判文案）。
+                let where_txt = if final_idx == 0 {
+                    "整窗".to_string()
+                } else {
+                    format!("第{final_idx}格")
+                };
+
+                // 3) 点中魔精灵，下一个周期从这一下重新起算
                 let clk_at = epoch_ms();
                 HIT_AT_MS.store(clk_at, Ordering::SeqCst);
                 unsafe { click_point(cfg, &f, cx, cy, "魔精灵") };
@@ -2425,12 +2918,21 @@ pub fn click_loop(cfg: &Config, engine: Option<&Engine>, levels: &[matcher::TplS
                     break;
                 }
                 refreshes += 1;
+                book.before_refresh(cfg, &f);
+                empty_votes = 0;
+                empty_vote_at = 0;
                 unsafe { click_refresh(cfg, &f, "点中后换牌") };
                 last_refresh = epoch_ms();
                 prev_miss_bgra = None; // 换牌了，旧帧不再是基准
+                grace_round = 0;
                 INTERVAL_MS.store(settle_ms.max(1), Ordering::SeqCst);
                 LAST_TICK_MS.store(epoch_ms(), Ordering::SeqCst);
-                sleep_interruptible(Duration::from_millis(settle_ms));
+                let d = settle_after_refresh(cfg, &f);
+                book.after_refresh(d);
+                if book.blocked() {
+                    logw!("[refresh] 连续 {} 次{}", book.bad, BAD_REFRESH_MSG);
+                    break;
+                }
             }
 
             Scan::Miss { score, frame: f } => {
@@ -2454,10 +2956,95 @@ pub fn click_loop(cfg: &Config, engine: Option<&Engine>, levels: &[matcher::TplS
                 // 刷新最小间隔：不管「超时未找到」还是「画面静止确认没有」，两刷之间都不许短于它。
                 // 没有这条时实测两刷间隔只有 450~570 ms，一分钟刷上百次，金币根本跟不上。
                 let gap_min = cfg.refresh_gap_ms;
-                let by_timeout = since >= cfg.find_wait_ms.max(gap_min);
-                let by_quiet = since >= STABLE_MIN_MS.max(gap_min) && quiet && !borderline;
+
+                // ── 防线 1：这次刷新还没被确认生效（牌面几乎没变）→ 牌还是旧牌，绝不能判空。
+                //    旧牌早就被判过一次「没有」，再判当然还是没有，这就是空刷本体：
+                //    钱扣了、牌没换，一两秒后又刷一次。
+                if !book.effective {
+                    let late = if since >= EMPTY_MIN_OBSERVE_MS {
+                        book.recheck_late(cfg, &f)
+                    } else {
+                        -1.0
+                    };
+                    if book.effective {
+                        logvln!(
+                            "[refresh] (+{}ms) 牌面后来画完了（三格差异 {late:.2}%）→ 恢复判空",
+                            elapsed_ms()
+                        );
+                    } else if since < REFRESH_UNSURE_WAIT_MS {
+                        empty_votes = 0;
+                        empty_vote_at = 0;
+                        prev_miss_bgra = Some(f.bgra);
+                        LAST_TICK_MS.store(now, Ordering::SeqCst);
+                        INTERVAL_MS.store(UNSETTLED_POLL_MS, Ordering::SeqCst);
+                        logvln!(
+                            "[wait] 刷新后 {since} ms 牌面还没变化（差异 {late:.2}%）→ 不判空，继续等牌画完（上限 {REFRESH_UNSURE_WAIT_MS} ms）"
+                        );
+                        sleep_interruptible(Duration::from_millis(UNSETTLED_POLL_MS));
+                        continue;
+                    } else {
+                        logw!(
+                            "[refresh] 刷新后 {since} ms 牌面仍几乎没变（差异 {late:.2}% < {REFRESH_EFFECT_MIN_PCT:.2}%）→ 这回刷新可能没生效（按钮坐标偏了 / 后台点击被忽略）。按超时放行本次；连续 {REFRESH_BLOCK_ROUNDS} 次不生效会直接停手"
+                        );
+                        book.effective = true; // 放行本次，交给下面的超时刷新 + 止血阀
+                    }
+                }
+
+                // ── 防线 2：多帧投票。单帧判决会把「牌面正在重绘的空档」直接当成没牌。
+                if quiet && !borderline {
+                    if empty_votes == 0 {
+                        empty_vote_at = now;
+                    }
+                    empty_votes = empty_votes.saturating_add(1);
+                } else {
+                    empty_votes = 0;
+                    empty_vote_at = 0;
+                }
+                let vote_ok = empty_votes >= EMPTY_VOTES_NEED
+                    && now.saturating_sub(empty_vote_at) >= EMPTY_VOTES_SPAN_MS;
+
+                // ── 防线 3：最短观察窗口 + 票数门槛。
+                //    「画面静止确认没有」要求 1.2 秒之后且票数达标；
+                //    「超时未找到」同样要求票数达标，只在画面一直在动（票永远凑不齐）时
+                //    用 find_wait + 1.2 秒的兜底放行，避免死等不刷。
+                // 【2026-11-09 修正】assume_one 模式下「三格必有一张」是硬规则，
+                // Miss 只可能是「抓早了，牌还没画完」或「坐标偏了」，
+                // 所以观察窗口从 EMPTY_MIN_OBSERVE_MS(1200) 抬到 ASSUME_MISS_OBSERVE_MS(1500)，
+                // 把「牌没画完就花钱再刷一次」这个空刷源头再收紧一档。
+                let observe_floor = if cfg.assume_one {
+                    ASSUME_MISS_OBSERVE_MS
+                } else {
+                    EMPTY_MIN_OBSERVE_MS
+                };
+                let hard_deadline = cfg
+                    .find_wait_ms
+                    .max(gap_min)
+                    .saturating_add(EMPTY_VOTES_SPAN_MS * 4);
+                let by_timeout = since >= cfg.find_wait_ms.max(gap_min).max(observe_floor)
+                    && (vote_ok || since >= hard_deadline);
+                let by_quiet = since >= observe_floor.max(gap_min)
+                    && quiet
+                    && !borderline
+                    && vote_ok;
+
+                // 分数贴着阈值：先给两轮宽限再看，别把「动画还没画完的真牌」当成没有刷掉。
+                // 宽限期间不刷新（不花钱），只重新抓一帧重扫，分数升上去就会自然命中并点击。
+                if cfg.borderline_grace && by_timeout && borderline && grace_round < BORDERLINE_GRACE_ROUNDS {
+                    grace_round += 1;
+                    logvln!(
+                        "[grace] 最高分 {score:.3} 贴着阈值 {:.2}（宽限 {}/{}）→ 先不刷新，等牌画完再看",
+                        cfg.lo_score(),
+                        grace_round,
+                        BORDERLINE_GRACE_ROUNDS
+                    );
+                    INTERVAL_MS.store(BORDERLINE_GRACE_MS, Ordering::SeqCst);
+                    LAST_TICK_MS.store(now, Ordering::SeqCst);
+                    sleep_interruptible(Duration::from_millis(BORDERLINE_GRACE_MS));
+                    continue;
+                }
 
                 if by_timeout || by_quiet {
+                    grace_round = 0;
                     let why = if by_timeout { "超时未找到" } else { "画面静止确认没有" };
                     // 金币变红 = 没钱刷新了：先停下等钱（等钱期间不刷新不点击不查找），红了没了再刷
                     if !ensure_money(cfg, &f, why) {
@@ -2481,12 +3068,20 @@ pub fn click_loop(cfg: &Config, engine: Option<&Engine>, levels: &[matcher::TplS
                             cfg.refresh_gap_ms
                         );
                     }
+                    book.before_refresh(cfg, &f);
+                    empty_votes = 0;
+                    empty_vote_at = 0;
                     unsafe { click_refresh(cfg, &f, why) };
                     last_refresh = epoch_ms();
                     prev_miss_bgra = None;
                     INTERVAL_MS.store(settle_ms.max(1), Ordering::SeqCst);
                     LAST_TICK_MS.store(epoch_ms(), Ordering::SeqCst);
-                    sleep_interruptible(Duration::from_millis(settle_ms));
+                    let d = settle_after_refresh(cfg, &f);
+                    book.after_refresh(d);
+                    if book.blocked() {
+                        logw!("[refresh] 连续 {} 次{}", book.bad, BAD_REFRESH_MSG);
+                        break;
+                    }
                 } else {
                     // 新牌还在画 / 还没到最小刷新间隔：不刷新，但也别每 20~30 ms 狂抓一帧把 CPU 吃满
                     prev_miss_bgra = Some(f.bgra);
