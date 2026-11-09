@@ -150,7 +150,7 @@ pub unsafe fn client_geometry(hwnd: HWND) -> Option<(i32, i32, i32, i32, i32, i3
 
 // ==================== 后台抓图（与 TFJL.exe 同款通路） ====================
 //
-// TFJL 的抓图不是「截屏」，而是问窗口要绘制表面：
+// 抓图不是「截屏」，而是问窗口要绘制表面：
 //   GetWindowDC(hwnd) → CreateCompatibleDC/Bitmap → SelectObject → BitBlt → 转像素
 //   （.NET 里用 Bitmap.FromHbitmap 取像素；这里用 GetDIBits 等价实现）
 // 附加一条 PrintWindow(PW_RENDERFULLCONTENT) 通路，专门对付 GPU 合成的窗口
@@ -791,7 +791,7 @@ fn expand_keywords(key: &str) -> Vec<String> {
 }
 
 /// 干扰窗口过滤：这些不是游戏本体窗体，查找时必须剔除。
-/// - 进程 TFJL.exe：辅助程序，它的窗口标题形如「锁0724-2.27.2.50」，不是游戏本体
+/// - 进程辅助程序，它的窗口标题形如「锁0724-2.27.2.50」，不是游戏本体
 /// - 系统外壳类窗口
 /// 注意：不能按「锁」开头的标题过滤 —— 游戏本体的窗口标题恰恰是房间号「锁0724」。
 pub fn is_noise(title: &str, exe: &str) -> bool {
