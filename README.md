@@ -57,7 +57,7 @@ Copy `Mclick.exe` to any Windows 10/11 machine, double-click, done.
 Mclick.exe
 
 :: Recognition mode (CLI): find the Magic Sprite and click it
-Mclick.exe --window "塔防" --interval 5 --times 0
+Mclick.exe --window "<窗口标题关键字>" --interval 5 --times 0
 
 :: Fixed coordinate mode, no recognition
 Mclick.exe --coords 960,540 --times 60
@@ -66,10 +66,10 @@ Mclick.exe --coords 960,540 --times 60
 Mclick.exe --self-test
 
 :: Dump screenshots and relax the threshold for diagnosis
-Mclick.exe --window "塔防" --dump --threshold 0.7 --times 1
+Mclick.exe --window "<窗口标题关键字>" --dump --threshold 0.7 --times 1
 ```
 
-GUI workflow: type a substring of the game window title (default `塔防`, empty = foreground window) → set the interval (default 5 s) → press **开始 / Start**. The program keeps clicking the target card when it is present, and presses **刷新 / Refresh** when it is not.
+GUI workflow: type a substring of the game window title (default = built-in game-window auto-detection, empty = foreground window) → set the interval (default 5 s) → press **开始 / Start**. The program keeps clicking the target card when it is present, and presses **刷新 / Refresh** when it is not.
 
 Run `Mclick.exe --help` for the complete list of options.
 
@@ -330,7 +330,7 @@ MIT — Copyright © 2026 capfmud — see [LICENSE](LICENSE).
 
 ### 项目简介
 
-Mclick 是一个自包含的 Windows 自动点击器，用于某塔防小游戏：截取游戏窗口，在三格手牌中定位目标卡牌，点中它；三格里都没有目标时就点右侧 **刷新**。
+Mclick 是一个自包含的 Windows 自动点击器，用于某小程序游戏场景：截取游戏窗口，在三格手牌中定位目标卡牌，点中它；三格里都没有目标时就点右侧 **刷新**。
 
 所有资源都编进同一个可执行文件：
 
@@ -369,7 +369,7 @@ Mclick 是一个自包含的 Windows 自动点击器，用于某塔防小游戏�
 Mclick.exe
 
 :: 识别模式（命令行）：找魔精灵并点击
-Mclick.exe --window "塔防" --interval 5 --times 0
+Mclick.exe --window "<窗口标题关键字>" --interval 5 --times 0
 
 :: 固定坐标模式，不做识别
 Mclick.exe --coords 960,540 --times 60
@@ -378,10 +378,10 @@ Mclick.exe --coords 960,540 --times 60
 Mclick.exe --self-test
 
 :: 识别不准时：存截图 + 降阈值排查
-Mclick.exe --window "塔防" --dump --threshold 0.7 --times 1
+Mclick.exe --window "<窗口标题关键字>" --dump --threshold 0.7 --times 1
 ```
 
-图形界面流程：填游戏窗口标题关键字（默认 `塔防`，留空则取前台窗口）→ 设置间隔（默认 5 秒）→ 点 **开始**。程序会循环识别，找到目标就点，没有就点右侧 **刷新**。
+图形界面流程：填游戏窗口标题关键字（默认自动识别游戏本体窗口，留空则取前台窗口）→ 设置间隔（默认 5 秒）→ 点 **开始**。程序会循环识别，找到目标就点，没有就点右侧 **刷新**。
 
 `Mclick.exe --help` 可查看全部参数。
 

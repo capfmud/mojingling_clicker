@@ -769,7 +769,7 @@ fn parse_args() -> Config {
                      --probe-money [N]   采样金币区域红占比 N 次（默认 10）后退出，用于定阈值\n  \
                      --image <bmp>       用一张 BMP 当游戏画面做离线测试（不截屏）\n  \
                      --dry-run           空跑：只打印会点哪里，不真的动鼠标\n  \
-                     \n后台（与 TFJL 同款通路）:\n  \
+                     \n后台（消息式点击通路）:\n  \
                      --background        后台模式 = 后台抓图 + 后台点击（默认即是；显式写一遍更保险）\n  \
                      --fg-click          切回前台物理点击（SetCursorPos+mouse_event），只用于后台消息点不动时排查\n  \
                      --size WxH          把游戏窗体客户区强制成 WxH（如 1040x629，跨机器统一模板对齐尺寸）\n  \
@@ -1333,10 +1333,10 @@ pub fn report_find(key: &str) {
         if hits.is_empty() {
             logln!("[find] 没有找到含「{key}」的可见游戏窗口（标题、类名、进程名三者任一命中都算）。");
             logln!("[hint] 游戏本体 = 微信小程序运行时窗口：类名 Chrome_WidgetWin_0、进程 WeChatAppEx.exe；");
-            logln!("[hint] 辅助程序 TFJL.exe 的窗口（如「锁0724-2.27.2.50」）会被自动排除。");
+            logln!("[hint] 辅助程序的窗口（如「锁0724-2.27.2.50」）会被自动排除。");
             return;
         }
-        logln!("[find] 关键字「{key}」命中 {} 个窗口（TFJL.exe 辅助窗口已排除）：", hits.len());
+        logln!("[find] 关键字「{key}」命中 {} 个窗口（辅助窗口已排除）：", hits.len());
         for (i, w) in hits.iter().enumerate() {
             let exe = if w.exe.is_empty() { "?" } else { w.exe.as_str() };
             logln!(
@@ -1373,7 +1373,7 @@ fn log_capture_once(cap: &capture::Capture) {
             cap.via,
             match cap.via {
                 "d3d" => "D3D 子窗口 PrintWindow(PW2)，纯后台，窗口可被遮挡/最小化以外都行",
-                "dc" => "GetWindowDC+BitBlt，与 TFJL 同款",
+                "dc" => "GetWindowDC+BitBlt，窗口 DC 直取",
                 "pw" => "PrintWindow(PW_RENDERFULLCONTENT)",
                 _ => "屏幕抓取，要求窗口可见且不被遮挡",
             },

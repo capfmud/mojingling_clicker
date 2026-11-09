@@ -195,7 +195,7 @@ impl CaptureMode {
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim().to_lowercase().as_str() {
             "auto" | "" => Some(CaptureMode::Auto),
-            "dc" | "gdi" | "bitblt" | "tfjl" => Some(CaptureMode::WindowDc),
+            "dc" | "gdi" | "bitblt" => Some(CaptureMode::WindowDc),
             "pw" | "printwindow" => Some(CaptureMode::PrintWindow),
             "scr" | "screen" | "desktop" => Some(CaptureMode::Screen),
             "d3d" | "pw2" | "d3dpw2" | "d3d/pw2" | "d3d-pw2" => Some(CaptureMode::D3d),
