@@ -1,0 +1,36 @@
+# Rust build output
+/target/
+**/*.rs.bk
+*.bak
+*.pdb
+
+# Delivery folder (built artifacts, not sources)
+/deploy/
+/temp/
+
+# Build logs, live-capture dumps, debug notes
+*.log
+build*.txt
+live*.txt
+selftest*.txt
+self_test*.log
+probe_money*.txt
+scan_refresh*.log
+
+# Screenshots used during development
+gui_*.png
+gray_check/
+
+# One-off debug notes and captured help text
+/help_v1.txt
+/修复说明_*.txt
+
+# Local binaries in the repo root
+/*.exe
+*.exe.bak
+
+# Editor / OS noise
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

@@ -1,0 +1,32 @@
+[package]
+name = "mojingling_clicker"
+version = "1.1.9"
+edition = "2021"
+description = "一秒一次魔精灵 — 单文件交付版（模板内嵌进 exe，零外部依赖）"
+license = "MIT"
+repository = "https://github.com/capfmud/mojingling_clicker"
+homepage = "https://github.com/capfmud/mojingling_clicker"
+readme = "README.md"
+
+build = "build.rs"
+
+# 交付文件名 Mclick.exe（窗口标题仍是「魔精灵点击器」，crate 名保持不变）
+[[bin]]
+name = "Mclick"
+path = "src/main.rs"
+
+# 零外部依赖：不引入任何 crates.io 包，模板图通过 include_bytes! 编译进可执行文件。
+# 因此 `cargo build --release --offline` 在无网络环境也能直接编译出单文件 exe。
+[dependencies]
+
+# 仅用于「构建期」把 .ico 编进 exe 资源节，不进入运行时依赖
+# 所以最终 exe 依旧是零外部依赖的单文件。
+[build-dependencies]
+embed-resource = "2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
