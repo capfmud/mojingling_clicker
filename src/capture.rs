@@ -148,7 +148,7 @@ pub unsafe fn client_geometry(hwnd: HWND) -> Option<(i32, i32, i32, i32, i32, i3
     Some((x, y, w, h, svx + sw, svy + sh))
 }
 
-// ==================== 后台抓图（与 TFJL.exe 同款通路） ====================
+// ==================== 后台抓图（与游戏客户端同款通路） ====================
 //
 // 抓图不是「截屏」，而是问窗口要绘制表面：
 //   GetWindowDC(hwnd) → CreateCompatibleDC/Bitmap → SelectObject → BitBlt → 转像素
@@ -160,9 +160,9 @@ pub unsafe fn client_geometry(hwnd: HWND) -> Option<(i32, i32, i32, i32, i32, i3
 /// 抓图方式
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CaptureMode {
-    /// 自动：先试 TFJL 同款 GetWindowDC+BitBlt，画面无效再试 PrintWindow
+    /// 自动：先试同款 GetWindowDC+BitBlt，画面无效再试 PrintWindow
     Auto,
-    /// 只用 GetWindowDC + BitBlt（TFJL 同款，对 GDI 绘制的窗口最快最稳）
+    /// 只用 GetWindowDC + BitBlt（同款方案，对 GDI 绘制的窗口最快最稳）
     WindowDc,
     /// 只用 PrintWindow(PW_RENDERFULLCONTENT → PW_CLIENTONLY)
     PrintWindow,
@@ -351,7 +351,7 @@ unsafe fn release_window_dc(hwnd: HWND, dc: HDC) {
     }
 }
 
-/// 通路 1：GetWindowDC + BitBlt（TFJL 同款）
+/// 通路 1：GetWindowDC + BitBlt（同款方案）
 /// BitBlt 的源原点必须对准客户区在「整个窗口」内的偏移，
 /// 否则会把标题栏/边框也拷进来，导致整片 ROI 偏掉十几像素。
 unsafe fn grab_by_window_dc(hwnd: HWND, w: i32, h: i32) -> Option<Vec<u8>> {
@@ -711,7 +711,7 @@ fn wide_to_string(w: &[u16]) -> String {
     String::from_utf16_lossy(&w[..end])
 }
 
-/// 取进程可执行文件名（如 TFJL.exe），取不到返回空串
+/// 取进程可执行文件名（如 game.exe），取不到返回空串
 unsafe fn proc_exe(pid: u32) -> String {
     if pid == 0 {
         return String::new();
@@ -774,8 +774,8 @@ pub unsafe fn list_top_windows() -> Vec<WinInfo> {
     v
 }
 
-/// 关键字拆分：支持 `塔防精灵|精灵` / 逗号 / 空格分隔的“或”组合，任一命中即算。
-/// 注意：不再做任何进程名自动别名展开 —— TFJL.exe 是辅助程序，不是游戏本体。
+/// 关键字拆分：支持 `游戏名|子串` / 逗号 / 空格分隔的“或”组合，任一命中即算。
+/// 注意：不再做任何进程名自动别名展开 —— 辅助程序不是游戏本体。
 fn expand_keywords(key: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for t in key
@@ -815,8 +815,8 @@ const MIN_GAME_H: i32 = 320;
 
 /// 定位「游戏本体」窗口（实测结论，不依赖标题）：
 /// 游戏跑在微信小程序运行时里 —— 类名 `Chrome_WidgetWin_0`、进程 `WeChatAppEx.exe`、
-/// 标题是房间号（如「锁0724」），画面上才是「塔防精灵」。
-/// 优先顺序：① 微信小程序运行时窗口里「够大」的那个（客户区至少 320x320，排除 144x20 这类幽灵壳窗口）② 标题含「塔防精灵」的窗口
+/// 标题是房间号（如「锁0724」），画面上才是游戏画面。
+/// 优先顺序：① 小程序运行时窗口里「够大」的那个（客户区至少 320x320，排除 144x20 这类幽灵壳窗口）② 标题含游戏名的窗口
 pub unsafe fn find_game_window() -> Option<WinInfo> {
     let all = list_top_windows();
     let mut best: Option<WinInfo> = None;
@@ -836,7 +836,7 @@ pub unsafe fn find_game_window() -> Option<WinInfo> {
                 fallback_area = area;
                 fallback = Some(w.clone());
             }
-            // 微信会挂一个标题为「塔防精灵」、客户区 144x20 的隐形壳窗口，
+            // 运行时会挂一个标题为游戏名、客户区 144x20 的隐形壳窗口，
             // 只按标题或只按面积排序都可能锁到它，抓图会全空。先卡尺寸门槛。
             if w.cw < MIN_GAME_W || w.ch < MIN_GAME_H {
                 continue;
@@ -859,7 +859,7 @@ pub unsafe fn find_game_window() -> Option<WinInfo> {
         .cloned()
 }
 
-/// 统一目标解析：默认关键字（塔防精灵 / 空）优先走「进程+类名」识别游戏本体，
+/// 统一目标解析：默认关键字（游戏名 / 空）优先走「进程+类名」识别游戏本体，
 /// 其余关键字走标题/类名/进程名模糊匹配。
 pub unsafe fn resolve_target(key: &str) -> Option<WinInfo> {
     let k = key.trim();

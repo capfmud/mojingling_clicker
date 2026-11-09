@@ -1136,7 +1136,7 @@ unsafe fn lookup_and_show_q(hwnd: HWND, key: &str, quiet: bool) -> Option<isize>
         *g = key.clone();
     }
 
-    // 关键：游戏窗体的标题是房间号（如「锁0724」），不含「塔防精灵」，
+    // 关键：游戏窗体的标题是房间号（如「锁0724」），不含游戏名，
     // 因此默认目标改用「进程 WeChatAppEx + 类名 Chrome_WidgetWin_0」识别，
     // 关键字命中只作为补充来源。
     let mut hits: Vec<crate::capture::WinInfo> = Vec::new();

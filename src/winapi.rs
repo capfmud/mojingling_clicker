@@ -233,9 +233,9 @@ pub fn current_pid() -> u32 {
 }
 
 
-// ==================== 后台抓图 / 后台点击（TFJL 同款 API 面） ====================
+// ==================== 后台抓图 / 后台点击（同款 API 面） ====================
 //
-// TFJL.exe 的原生边界里，抓图链路是：
+// 游戏客户端的原生边界里，抓图链路是：
 //   user32: GetWindowDC / GetWindowRect / ReleaseDC  (+ PrintWindow 作兜底)
 //   gdi32 : CreateCompatibleDC / CreateCompatibleBitmap / SelectObject / BitBlt / GetDeviceCaps
 //   .NET  : Bitmap.FromHbitmap 把 HBITMAP 转成像素（我们这里用 GetDIBits 等价代替）

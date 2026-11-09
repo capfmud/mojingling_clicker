@@ -10,10 +10,10 @@
 //! 带参数启动 = 命令行模式（自动挂到控制台，便于脚本调用）。
 //!
 //! 用法示例：
-//!   mojingling_clicker.exe --window "塔防" --interval 5 --times 0
+//!   mojingling_clicker.exe --window "<标题关键字>" --interval 5 --times 0
 //!   mojingling_clicker.exe --coords 960,540 --times 60          # 固定坐标
 //!   mojingling_clicker.exe --self-test                          # 自检（无需游戏）
-//!   mojingling_clicker.exe --window "塔防" --dump --times 1      # 存截图排查
+//!   mojingling_clicker.exe --window "<标题关键字>" --dump --times 1    # 存截图排查
 //!
 //! 安全提示：程序会真实移动鼠标并点击，请确认目标窗口后再运行。
 
@@ -40,7 +40,7 @@ pub static RUNNING: AtomicBool = AtomicBool::new(false);
 
 /// 节拍信息（供界面「记时」倒计时显示）：
 /// LAST_TICK_MS = 最近一次点击发生的时刻（epoch 毫秒），TICK_SEQ = 已点次数，
-/// INTERVAL_MS = 节拍周期（毫秒）。对应 TFJL 里 MissionBall 的「Stopwatch + intervalSec」机制：
+/// INTERVAL_MS = 节拍周期（毫秒）。对应原实现里 MissionBall 的「Stopwatch + intervalSec」机制：
 /// 到点执行命令后 swRestart() 重置秒表，等下一个周期。
 pub static LAST_TICK_MS: AtomicU64 = AtomicU64::new(0);
 pub static TICK_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -1473,7 +1473,7 @@ unsafe fn grab_frame(cfg: &Config) -> Option<Frame> {
     // 每轮重查窗口，兼容游戏重启。
     // 关键：必须与启动锁定走同一条解析路径（resolve_target：进程+类名优先、关键字兜底），
     // 否则会出现「启动能锁上、一开跑就一直 [skip]」的不一致 —— 游戏窗口标题是房间号，
-    // 根本不含「塔防精灵」这几个字，纯关键字匹配永远命中不了。
+    // 根本不含游戏名这几个字，纯关键字匹配永远命中不了。
     let target: HWND = if cfg.window_title.is_empty() {
         GetForegroundWindow()
     } else {
@@ -2385,7 +2385,7 @@ unsafe fn probe_refresh(cfg: &Config, levels: &[matcher::TplScale], rounds: u32)
 
 /// 扫描底部按钮栏，找出「点一下三格牌面就会变、但整窗不大变」的那个坐标，打印客户区坐标与相对比例。
 /// 换电脑后游戏窗口尺寸/宽高比一变，刷新按钮的相对比例就会偏，用这个命令重新标定：
-///   mojingling_clicker.exe --window 塔防精灵 --scan-refresh
+///   mojingling_clicker.exe --window <标题关键字> --scan-refresh
 /// # Safety
 /// 会真实移动鼠标并点击底部栏若干位置。
 unsafe fn scan_refresh(cfg: &Config) {

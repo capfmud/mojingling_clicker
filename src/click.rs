@@ -1,5 +1,5 @@
 //! 鼠标点击层：调用 user32 现成 API（SetCursorPos + mouse_event）模拟物理点击，
-//! 与 TFJL.exe 自身调用链（user32: SetCursorPos / mouse_event）保持一致。
+//! 与游戏客户端自身调用链（user32: SetCursorPos / mouse_event）保持一致。
 
 use crate::winapi::*;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -83,7 +83,7 @@ pub unsafe fn click_at(hwnd: Option<HWND>, x: i32, y: i32, bring_to_front: bool)
     }
 }
 
-// ==================== 后台点击（TFJL 同款：PostMessage） ====================
+// ==================== 后台点击（同款方案：PostMessage） ====================
 //
 //  P/Invoke 里同时导入了 mouse_event（前台物理点击）和 PostMessage/SendMessage
 // （消息式点击）。后者把 WM_LBUTTONDOWN / WM_LBUTTONUP 直接投给游戏窗口，
