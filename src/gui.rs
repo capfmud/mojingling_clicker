@@ -355,9 +355,12 @@ pub fn main_hwnd() -> isize {
     MAIN_HWND.load(Ordering::SeqCst)
 }
 
-/// 启动时自动查找的默认关键字
 const TARGET_POS: (i32, i32) = (10, 10);
-const DEFAULT_KEYWORD: &str = "塔防精灵";
+
+/// 启动时自动查找的默认关键字：由 config.toml / 环境变量提供，代码里不写死任何程序名
+fn default_keyword() -> String {
+    crate::profile::get().default_keyword.clone()
+}
 
 // ---------- 吸附参数 ----------
 /// 吸附时本窗口左边缘与游戏窗口右边界之间的距离（像素）
@@ -906,7 +909,7 @@ unsafe fn on_start(hwnd: HWND) {
     let title = {
         let kw = KEYWORD.lock().map(|g| g.clone()).unwrap_or_default();
         if kw.trim().is_empty() {
-            DEFAULT_KEYWORD.to_string()
+            default_keyword()
         } else {
             kw
         }
@@ -1349,7 +1352,7 @@ unsafe fn autoscan(hwnd: HWND) {
     }
     let mut key = KEYWORD.lock().map(|g| g.clone()).unwrap_or_default();
     if key.is_empty() || key.to_lowercase().starts_with("0x") {
-        key = DEFAULT_KEYWORD.to_string();
+        key = default_keyword();
     }
     lookup_and_show_q(hwnd, &key, true);
 }
@@ -1679,8 +1682,13 @@ pub fn run() {
         UpdateWindow(hwnd);
 
         // 启动即自动查找目标窗口，并把句柄填到左上角 edit
-        logger::log(format!("[auto] 正在自动查找窗口「{DEFAULT_KEYWORD}」…"));
-        if lookup_and_show(hwnd, DEFAULT_KEYWORD).is_none() {
+        let auto_kw = default_keyword();
+        if auto_kw.trim().is_empty() {
+            logger::log("[auto] 未配置默认窗口关键字（config.toml: default_keyword），改为按类名+进程名识别游戏本体。");
+        } else {
+            logger::log(format!("[auto] 正在自动查找窗口「{auto_kw}」…"));
+        }
+        if lookup_and_show(hwnd, &auto_kw).is_none() {
             logger::log("[auto] 暂未找到游戏窗体，已开启后台扫描，游戏打开后会自动锁定。");
         }
         // 开启后台扫描：游戏晚于本程序启动，或锁定的窗口被关掉，都能自动重新接管

@@ -25,6 +25,7 @@ mod ffi;
 mod gui;
 mod logger;
 mod matcher;
+mod profile;
 mod sizelock;
 mod winapi;
 
@@ -122,6 +123,8 @@ pub struct Config {
     pub bg_click: bool,
     /// 诊断：打印两条抓图通路的画面特征后退出（判断本机游戏窗口吃哪条）
     pub probe: bool,
+    /// 诊断：打印本次生效的站点参数（config.toml / 环境变量）后退出
+    pub show_config: bool,
     /// 诊断：测量「点刷新 → 新牌面画完」的耗时，采样 N 轮后退出（0 = 不启用）
     pub probe_refresh: u32,
     /// 标定：扫描底部按钮栏，找出「点一下三格牌面就会变」的刷新按钮坐标后退出（换机标定用）
@@ -233,6 +236,7 @@ impl Default for Config {
             // 想回到物理鼠标（SetCursorPos + mouse_event）用 --fg-click 显式开。
             bg_click: true,
             probe: false,
+            show_config: false,
             probe_refresh: 0,
             scan_refresh: false,
             step: 2,
@@ -690,6 +694,7 @@ fn parse_args() -> Config {
             }
             "--scan-refresh" => cfg.scan_refresh = true,
             "--probe" => cfg.probe = true,
+            "--show-config" => cfg.show_config = true,
             "--step" => {
                 i += 1;
                 cfg.step = args.get(i).and_then(|s| s.parse().ok()).unwrap_or(2).max(1);
@@ -783,6 +788,7 @@ fn parse_args() -> Config {
                      --bg-click          只把点击改成 PostMessage 消息式（鼠标不移动）\n  \
                      --scan-refresh      扫描底部按钮栏，自动定位「刷新」按钮坐标后退出（换机标定用）\n  \
                      --probe             打印两条抓图通路的画面特征后退出（判断哪条有效）\n  \
+                     --show-config       打印本次生效的站点参数（config.toml / 环境变量）后退出\n  \
                      --probe-refresh [N] 测量「点刷新 → 新牌面画完」耗时，采样 N 轮（默认 8）后退出\n  \
                      --step <N>          粗筛步长（默认 2）\n  \
                      --topk <N>          精修候选数（默认 6）\n  \
@@ -863,6 +869,8 @@ fn load_size_cfg() {
 }
 
 fn main() {
+    // 先加载站点参数（config.toml / MCLICK_* 环境变量），任何窗口扫描之前完成
+    profile::init();
     // 启动横幅先落盘：无论后面是崩了、被关了还是正常退出，日志文件里都有这一条起点
     logger::file_banner("Mclick");
     load_size_cfg();
@@ -1075,6 +1083,11 @@ fn cli_main() {
     // 后台模式不搬动、不激活目标窗口
     AUTO_MOVE.store(!cfg.bg_click, Ordering::SeqCst);
 
+    if cfg.show_config {
+        println!("{}", profile::describe());
+        return;
+    }
+
     if cfg.self_test {
         let (_pass, fail) = self_test();
         if fail > 0 {
@@ -1214,7 +1227,7 @@ fn cli_main() {
         std::process::exit(1);
     }
     if cfg.coords.is_none() && cfg.dll_path.is_none() && cfg.window_title.is_empty() {
-        logw!("[warn] 未指定 --window，将使用当前前台窗口");
+        logw!("[warn] 未指定 --window，将按「窗口类名 + 进程名」自动识别游戏本体（也可在 config.toml 的 default_keyword 里指定标题关键字）");
     }
 
     // DLL 识别模式（可选，保留兼容）
@@ -1318,7 +1331,7 @@ pub unsafe fn report_list() {
 pub fn report_find(key: &str) {
     let key = key.trim();
     if key.is_empty() {
-        logln!("[find] 请先在「窗口标题」输入框里填关键字（标题片段 / 类名 / 进程 exe 名均可）。");
+        logln!("[find] 没给关键字：用 --window <关键字> 指定，或在 config.toml 的 default_keyword 里配默认值（标题片段 / 类名 / 进程 exe 名均可）。");
         return;
     }
     unsafe {

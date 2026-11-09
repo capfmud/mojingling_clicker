@@ -37,3 +37,6 @@ desktop.ini
 
 # Delivery folder (built exe + source snapshots, kept local only)
 /releases/
+
+# 本地站点参数（含具体程序名/窗口名，不入库）
+/config.toml

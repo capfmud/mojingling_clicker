@@ -1,0 +1,16 @@
+# 把本文件复制为 config.toml 后按需填写（config.toml 不会进 git）。
+# 全部留空同样可用：程序会按「窗口类名 + 进程名」自动识别游戏本体。
+# 优先顺序：内建空默认 < config.toml < 环境变量 MCLICK_*
+
+# 未显式指定 --window 时使用的默认窗口关键字（GUI 启动自动查找也用它）
+default_keyword      = ""
+
+# 「进程+类名」识别失败时的兜底：窗口标题包含该子串即视为游戏本体
+fallback_title_hint  = ""
+
+# 干扰窗口过滤：进程名前缀命中即排除（小写、前缀匹配）
+# 填法示例：noise_exe_prefixes = ["somehelpertool", "anotherhelper"]
+noise_exe_prefixes   = []
+
+# 干扰窗口过滤：标题前缀命中即排除
+noise_title_prefixes = []

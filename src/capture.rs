@@ -794,12 +794,32 @@ fn expand_keywords(key: &str) -> Vec<String> {
 /// - 进程辅助程序，它的窗口标题形如「锁0724-2.27.2.50」，不是游戏本体
 /// - 系统外壳类窗口
 /// 注意：不能按「锁」开头的标题过滤 —— 游戏本体的窗口标题恰恰是房间号「锁0724」。
+///
+/// 具体要排除哪个进程/标题，不写死在代码里：进程名前缀与标题前缀都在
+/// `config.toml` 的 `noise_exe_prefixes` / `noise_title_prefixes` 里配置。
 pub fn is_noise(title: &str, exe: &str) -> bool {
-    let e = exe.to_lowercase();
-    if e.starts_with("tfjl") || e.starts_with("towerdefense") {
-        return true;
+    let prof = crate::profile::get();
+    if !prof.noise_exe_prefixes.is_empty() {
+        let e = exe.to_lowercase();
+        if prof
+            .noise_exe_prefixes
+            .iter()
+            .any(|p| e.starts_with(p.as_str()))
+        {
+            return true;
+        }
     }
     let t = title.trim();
+    if !prof.noise_title_prefixes.is_empty() {
+        let tl = t.to_lowercase();
+        if prof
+            .noise_title_prefixes
+            .iter()
+            .any(|p| tl.starts_with(p.as_str()))
+        {
+            return true;
+        }
+    }
     const SHELL: [&str; 4] = [
         "Program Manager",
         "MarvisShadowCompanion",
@@ -853,17 +873,23 @@ pub unsafe fn find_game_window() -> Option<WinInfo> {
     if fallback.is_some() {
         return fallback;
     }
+    // 最后一层兜底：按配置里的标题关键字找（`fallback_title_hint`，默认空则跳过这一步）
+    let hint = crate::profile::get().fallback_title_hint.to_lowercase();
+    if hint.is_empty() {
+        return None;
+    }
     all.iter()
         .filter(|w| !is_noise(&w.title, &w.exe))
-        .find(|w| w.title.contains("塔防精灵"))
+        .find(|w| w.title.to_lowercase().contains(&hint))
         .cloned()
 }
 
-/// 统一目标解析：默认关键字（游戏名 / 空）优先走「进程+类名」识别游戏本体，
+/// 统一目标解析：默认关键字（配置里的 default_keyword / 空）优先走「进程+类名」识别游戏本体，
 /// 其余关键字走标题/类名/进程名模糊匹配。
 pub unsafe fn resolve_target(key: &str) -> Option<WinInfo> {
     let k = key.trim();
-    if k.is_empty() || k.contains("塔防精灵") {
+    let dk = crate::profile::get().default_keyword.to_lowercase();
+    if k.is_empty() || (!dk.is_empty() && k.to_lowercase().contains(&dk)) {
         if let Some(w) = find_game_window() {
             return Some(w);
         }

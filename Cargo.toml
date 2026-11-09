@@ -1,6 +1,6 @@
 [package]
 name = "mojingling_clicker"
-version = "1.3.4"
+version = "1.3.5"
 edition = "2021"
 description = "一秒一次魔精灵 — 单文件交付版（模板内嵌进 exe，零外部依赖）"
 license = "MIT"

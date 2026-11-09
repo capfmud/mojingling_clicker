@@ -123,6 +123,7 @@ Run `Mclick.exe --help` for the complete list of options.
 | `--find-wait-ms <n>` | Longest wait for a match after a refresh | `550` |
 | `--scan-refresh` | Scan the bottom button bar, locate **Refresh**, print and exit | — |
 | `--probe` | Print features of both capture paths and exit | — |
+| `--show-config` | Print the effective target profile (`config.toml` / `MCLICK_*`) and exit | — |
 | `--probe-refresh [N]` | Measure refresh-to-repaint latency over N rounds | `8` |
 | `--step <n>` | Coarse-search stride on the 1/8 pyramid level | `2` |
 | `--topk <n>` | Candidates forwarded to the fine search | `6` |
@@ -251,8 +252,30 @@ cargo build --release --offline
 | `MCLICK_ELEVATED=1` | Internal marker set on the elevated child process (prevents an elevation loop) |
 | `MOJINGLING_VERBOSE=1` | Verbose logging, same as `-g` |
 | `MOJINGLING_COLORTEST=1` | Window colour self-check |
+| `MCLICK_CONFIG=<path>` | Explicit `config.toml` path (see *Target profile*) |
 
 Log file: `Mclick_run.log` next to the executable.
+
+### Target profile (`config.toml`)
+
+Everything that would otherwise hard-code a third-party program name lives outside the source tree.
+Copy `config.toml.example` next to `Mclick.exe` as `config.toml` and fill in what you need — every
+field is optional, and leaving all of them empty means the program identifies the game window purely
+by window class + process name.
+
+| Key | Meaning |
+|---|---|
+| `default_keyword` | Window-title keyword used when `--window` is not given (GUI auto-lookup uses it too) |
+| `fallback_title_hint` | Last-resort match: a window whose title contains this substring is treated as the game body |
+| `noise_exe_prefixes` | Process-name prefixes to ignore (lower-case, prefix match), e.g. `["somehelpertool"]` |
+| `noise_title_prefixes` | Window-title prefixes to ignore |
+
+Lookup order: `MCLICK_CONFIG` → `config.toml` next to the exe → `config.toml` in the current directory.
+Environment overrides: `MCLICK_DEFAULT_KEYWORD`, `MCLICK_FALLBACK_TITLE_HINT`,
+`MCLICK_NOISE_EXE_PREFIXES`, `MCLICK_NOISE_TITLE_PREFIXES` (comma separated).
+Run `Mclick.exe --show-config` to print what is actually in effect.
+
+`config.toml` is git-ignored: it is your local file, the repo only ships the example.
 
 ### Project layout
 
@@ -272,6 +295,7 @@ src/
   sizelock.rs     window client-area size lock
   elevate.rs      self-elevation
   logger.rs       logging
+  profile.rs      target profile loader (config.toml / MCLICK_* overrides)
   ffi.rs, winapi.rs, assets.rs   FFI and embedded-asset glue
 ```
 
@@ -435,6 +459,7 @@ Mclick.exe --window "<窗口标题关键字>" --dump --threshold 0.7 --times 1
 | `--find-wait-ms <n>` | 刷新后等查找的最长时间 | `550` |
 | `--scan-refresh` | 扫描底部按钮栏，定位**刷新**按钮后退出（换机标定） | — |
 | `--probe` | 打印两条抓图通路的画面特征后退出 | — |
+| `--show-config` | 打印实际生效的站点参数（`config.toml` / `MCLICK_*`）后退出 | — |
 | `--probe-refresh [N]` | 测量「点刷新 → 新牌面画完」耗时，采样 N 轮 | `8` |
 | `--step <n>` | 1/8 图粗筛步长 | `2` |
 | `--topk <n>` | 进入精搜的候选数 | `6` |
@@ -563,8 +588,29 @@ cargo build --release --offline
 | `MCLICK_ELEVATED=1` | 提权后子进程的内部标记（防止递归提权） |
 | `MOJINGLING_VERBOSE=1` | 详细日志，等同 `-g` |
 | `MOJINGLING_COLORTEST=1` | 窗口颜色自检 |
+| `MCLICK_CONFIG=<路径>` | 显式指定 `config.toml`（见「站点参数」） |
 
 日志文件：exe 同目录的 `Mclick_run.log`。
+
+### 站点参数（config.toml）
+
+凡是「会跟具体程序名绑定」的值都不写进源码，而是放在 exe 同目录的配置文件里。
+把 `config.toml.example` 复制成 `config.toml` 再按需填写；每一项都可以留空，
+全部留空时程序完全按「窗口类名 + 进程名」自动识别游戏本体。
+
+| 键 | 含义 |
+|---|---|
+| `default_keyword` | 没给 `--window` 时使用的窗口标题关键字（GUI 启动自动查找也用它） |
+| `fallback_title_hint` | 最后一层兜底：窗口标题包含该子串即视为游戏本体 |
+| `noise_exe_prefixes` | 干扰窗口的进程名前缀，命中即排除（小写、前缀匹配），如 `["somehelpertool"]` |
+| `noise_title_prefixes` | 干扰窗口的标题前缀，命中即排除 |
+
+查找顺序：`MCLICK_CONFIG` → exe 同目录的 `config.toml` → 当前工作目录的 `config.toml`。
+环境变量可覆盖：`MCLICK_DEFAULT_KEYWORD`、`MCLICK_FALLBACK_TITLE_HINT`、
+`MCLICK_NOISE_EXE_PREFIXES`、`MCLICK_NOISE_TITLE_PREFIXES`（逗号分隔）。
+想看实际生效的值，跑 `Mclick.exe --show-config`。
+
+`config.toml` 已被 .gitignore 忽略：它是你自己的本地文件，仓库里只放示例。
 
 ### 目录结构
 
@@ -584,6 +630,7 @@ src/
   sizelock.rs     窗口客户区尺寸锁定
   elevate.rs      自动提权
   logger.rs       日志
+  profile.rs      站点参数加载（config.toml / MCLICK_* 覆盖）
   ffi.rs, winapi.rs, assets.rs   FFI 与内嵌资源胶水
 ```
 
