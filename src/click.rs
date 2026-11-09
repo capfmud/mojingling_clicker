@@ -85,7 +85,7 @@ pub unsafe fn click_at(hwnd: Option<HWND>, x: i32, y: i32, bring_to_front: bool)
 
 // ==================== 后台点击（TFJL 同款：PostMessage） ====================
 //
-// TFJL 的 P/Invoke 里同时导入了 mouse_event（前台物理点击）和 PostMessage/SendMessage
+//  P/Invoke 里同时导入了 mouse_event（前台物理点击）和 PostMessage/SendMessage
 // （消息式点击）。后者把 WM_LBUTTONDOWN / WM_LBUTTONUP 直接投给游戏窗口，
 // 不移动真实鼠标、不抢前台、不影响用户同时干别的 —— 就是「后台点击」。
 // 坐标用客户区坐标（和后台找图拿到的 ROI 在同一坐标系里），不需要再转屏幕坐标。
