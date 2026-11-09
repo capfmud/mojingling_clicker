@@ -1,7 +1,7 @@
-//! 现成函数 FFI 层：LoadLibraryA 动态加载塔防老马助手自带原生 DLL，
+//! 现成函数 FFI 层：LoadLibraryA，
 //! GetProcAddress 运行时解析导出符号，不依赖任何硬编码地址。
 //!
-//! 签名说明：这些函数是 TFJL.exe 通过 P/Invoke 调用的现成导出（cdecl 约定）。
+//! 签名说明：这些函数是通过 P/Invoke 调用的现成导出（cdecl 约定）。
 //! 参数布局基于导出名语义 + OpenVINO/OpenCV 惯例推断，已在注释标注；
 //! 若与实际调用约定不符，只需调整对应的函数类型，无需改动主逻辑。
 
@@ -96,7 +96,7 @@ unsafe fn symbol<T>(lib: HMODULE, name: &str) -> Option<T> {
 impl Engine {
     /// 加载指定 DLL 并解析全部现成符号。
     /// # Safety
-    /// 加载第三方 DLL；调用方需保证来源可信（本目录为塔防老马助手自带）。
+    /// 加载第三方 DLL；调用方需保证来源可信（本目录）。
     pub unsafe fn load(dll_path: &Path) -> Result<Self, String> {
         if !dll_path.exists() {
             return Err(format!("DLL 不存在: {}", dll_path.display()));
